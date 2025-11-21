@@ -10,7 +10,7 @@ import { globalErrorHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import subjectRoutes from './routes/subject.routes.js';
-
+import testRoutes from './routes/test.routes.js';
 
 const app = express();
 
@@ -31,6 +31,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/subjects', subjectRoutes);
 
+app.use('/api/tests', testRoutes);
 // 404
 app.all('*', (req, res, next) => {
   next(new AppError(`Route ${req.originalUrl} not found`, 404));
