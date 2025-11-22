@@ -7,7 +7,10 @@ import {
   addQuestionsToTest,
   getMyTests,
   startTest,
-  submitTest
+  submitTest,
+  getTestLeaderboard,
+  exportTestResults,
+  getGlobalTestLeaderboard
 } from '../controllers/testController.js';
 import { protect } from '../middleware/auth.js';
 
@@ -22,5 +25,12 @@ router.post('/:testId/add-questions', addQuestionsToTest);
 router.get('/my-tests', getMyTests);
 router.get('/:testId/start', startTest);
 router.post('/:testId/submit', submitTest);
+// Leaderboard
+router.get('/:testId/leaderboard', getTestLeaderboard);
 
+// Export Results (Only Admin/Staff/Dept Head)
+router.get('/:testId/export-results', exportTestResults);
+
+// Global Test Leaderboard (Main attraction)
+router.get('/leaderboard/global', getGlobalTestLeaderboard);
 export default router;

@@ -270,3 +270,165 @@ export const submitTest = catchAsync(async (req, res, next) => {
     conn.release();
   }
 });
+
+// ====================== LEADERBOARD ======================
+export const getTestLeaderboard = catchAsync(async (req, res, next) => {
+  const { testId } = req.params;
+  const { type = 'overall' } = req.query; // overall | department | batch
+
+  let query = `
+    SELECT s.student_id, u.full_name, s.batch_year, d.dept_name, sta.score,
+           sta.submitted_at
+    FROM student_test_attempts sta
+    JOIN students s ON sta.student_id = s.student_id
+    JOIN users u ON s.user_id = u.user_id
+    JOIN departments d ON s.dept_id = d.dept_id
+    WHERE sta.test_id = ? AND sta.score IS NOT NULL
+  `;
+
+  const params = [testId];
+
+  if (type === 'department') {
+    const { dept_id } = req.query;
+    if (!dept_id) return next(new AppError('dept_id required', 400));
+    query += ` AND s.dept_id = ?`;
+    params.push(dept_id);
+  }
+
+  if (type === 'batch') {
+    const { batch_year } = req.query;
+    if (!batch_year) return next(new AppError('batch_year required', 400));
+    query += ` AND s.batch_year = ?`;
+    params.push(batch_year);
+  }
+
+  query += ` ORDER BY sta.score DESC, sta.submitted_at ASC LIMIT 100`;
+
+  const [rows] = await pool.query(query, params);
+
+  // Add rank
+  const leaderboard = rows.map((row, index) => ({
+    rank: index + 1,
+    student_id: row.student_id,
+    name: row.full_name,
+    department: row.dept_name,
+    batch_year: row.batch_year,
+    score: parseFloat(row.score).toFixed(2),
+    submitted_at: row.submitted_at
+  }));
+
+  res.status(200).json({
+    status: 'success',
+    data: { test_id: testId, type, count: leaderboard.length, leaderboard }
+  });
+});
+
+// ====================== EXPORT RESULTS TO EXCEL ======================
+import exceljs from 'exceljs';
+
+export const exportTestResults = catchAsync(async (req, res, next) => {
+  const { testId } = req.params;
+
+  const [test] = await pool.execute(`SELECT test_name FROM tests WHERE test_id = ?`, [testId]);
+  if (test.length === 0) return next(new AppError('Test not found', 404));
+
+  const [results] = await pool.query(`
+    SELECT u.full_name, s.student_id, d.dept_name, s.batch_year,
+           sta.score, sta.submitted_at
+    FROM student_test_attempts sta
+    JOIN students s ON sta.student_id = s.student_id
+    JOIN users u ON s.user_id = u.user_id
+    JOIN departments d ON s.dept_id = d.dept_id
+    WHERE sta.test_id = ? AND sta.score IS NOT NULL
+    ORDER BY sta.score DESC
+  `, [testId]);
+
+  const workbook = new exceljs.Workbook();
+  const sheet = workbook.addWorksheet('Results');
+
+  sheet.columns = [
+    { header: 'Rank', key: 'rank', width: 8 },
+    { header: 'Name', key: 'name', width: 25 },
+    { header: 'Student ID', key: 'student_id', width: 15 },
+    { header: 'Department', key: 'dept', width: 12 },
+    { header: 'Batch Year', key: 'batch', width: 12 },
+    { header: 'Score / 100', key: 'score', width: 15 },
+    { header: 'Submitted At', key: 'time', width: 20 }
+  ];
+
+  results.forEach((row, i) => {
+    sheet.addRow({
+      rank: i + 1,
+      name: row.full_name,
+      student_id: row.student_id,
+      dept: row.dept_name,
+      batch: row.batch_year,
+      score: parseFloat(row.score).toFixed(2),
+      time: new Date(row.submitted_at).toLocaleString('en-IN')
+    });
+  });
+
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(1).fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFE6E6E6' }
+  };
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${test[0].test_name}_Results.xlsx"`);
+
+  await workbook.xlsx.write(res);
+  res.end();
+});
+
+// GLOBAL TEST LEADERBOARD — BASED ON TOTAL TEST_SCORE
+export const getGlobalTestLeaderboard = catchAsync(async (req, res, next) => {
+  const { dept_id, batch_year, limit = 100 } = req.query;
+
+  let query = `
+    SELECT 
+      s.student_id,
+      u.full_name,
+      d.dept_name,
+      s.batch_year,
+      s.test_score,
+      RANK() OVER (ORDER BY s.test_score DESC, u.full_name ASC) as rank_position
+    FROM students s
+    JOIN users u ON s.user_id = u.user_id
+    JOIN departments d ON s.dept_id = d.dept_id
+    WHERE s.test_score > 0
+  `;
+
+  const params = [];
+
+  if (dept_id) {
+    query += ` AND s.dept_id = ?`;
+    params.push(dept_id);
+  }
+  if (batch_year) {
+    query += ` AND s.batch_year = ?`;
+    params.push(batch_year);
+  }
+
+  query += ` ORDER BY s.test_score DESC, u.full_name ASC LIMIT ?`;
+  params.push(parseInt(limit));
+
+  const [rows] = await pool.query(query, params);
+
+  const leaderboard = rows.map(row => ({
+    rank: row.rank_position,
+    student_id: row.student_id,
+    name: row.full_name,
+    department: row.dept_name,
+    batch_year: row.batch_year,
+    total_test_score: parseFloat(row.test_score).toFixed(2)
+  }));
+
+  res.status(200).json({
+    status: 'success',
+    filters: { dept_id, batch_year },
+    total_students: leaderboard.length,
+    data: { leaderboard }
+  });
+});
