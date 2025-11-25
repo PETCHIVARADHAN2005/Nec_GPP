@@ -263,6 +263,11 @@ export const submitTest = catchAsync(async (req, res, next) => {
       status: 'success',
       data: { score, correct, total: totalQuestions, percentage: `${score}%` }
     });
+        // ADD THIS LINE — GENIUS SCALABILITY FIX
+    await conn.execute(
+      `DELETE FROM student_test_responses WHERE test_id = ? AND student_id = ?`,
+      [testId, studentId]
+    );
   } catch (err) {
     await conn.rollback();
     next(err);
